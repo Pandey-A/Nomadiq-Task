@@ -1,14 +1,16 @@
+import ssl
+# BYPASS CERTIFICATE ERRORS (Fixes your specific Mac error)
+ssl._create_default_https_context = ssl._create_unverified_context
+
 import time
 import pandas as pd
 import random
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 from datetime import date, timedelta
 
 # --- CONFIGURATION ---
-# Skyscanner uses specific URL codes (IATA codes are usually fine)
 ROUTES = [
     {"origin": "DEL", "dest": "DXB"},
     {"origin": "BOM", "dest": "LHR"},
@@ -17,129 +19,134 @@ ROUTES = [
     {"origin": "DEL", "dest": "JFK"}
 ]
 
-class SkyscannerBot:
+class UltimateFlightScraper:
     def __init__(self):
-        # Use undetected_chromedriver to bypass basic Cloudflare checks
+        # Setup Chrome with anti-detect features
         options = uc.ChromeOptions()
         options.add_argument("--start-maximized")
-        # options.add_argument("--headless") # NEVER use headless for Skyscanner, it triggers instant bans
-        
+        options.add_argument("--disable-popup-blocking")
         self.driver = uc.Chrome(options=options)
-        self.data = []
+        self.data_list = []
 
-    def scrape_day(self, origin, dest, days_from_now):
-        # Calculate date strings
-        flight_date = date.today() + timedelta(days=days_from_now)
-        # Skyscanner URL format: yymmdd (e.g., 251129 for Nov 29, 2025)
-        date_str_url = flight_date.strftime("%y%m%d")
-        date_display = flight_date.strftime("%Y-%m-%d")
-
-        url = f"https://www.skyscanner.co.in/transport/flights/{origin.lower()}/{dest.lower()}/{date_str_url}"
+    def scrape_route(self, origin, dest):
+        print(f"\n✈️  Scraping All Flights: {origin} -> {dest}")
+        today = date.today()
         
-        print(f"\n✈️  Accessing {origin} -> {dest} for {date_display}...")
-        self.driver.get(url)
-        
-        # --- HUMAN INTERVENTION CHECK ---
-        # Skyscanner often shows a "Press & Hold" captcha on the first load.
-        # We wait 15 seconds to let the page load or for YOU to click the button.
-        time.sleep(random.uniform(10, 15)) 
-
-        try:
-            # Wait for the "results" container to appear
-            # Note: Skyscanner classes are dynamic (e.g. BpkTicket_bpk-ticket). We use partial matching.
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'Ticket')]"))
-            )
+        # Scrape next 30 days
+        for i in range(1,31): 
+            flight_date = today + timedelta(days=i)
+            date_str = flight_date.strftime("%Y-%m-%d")
             
-            # Find all flight cards
-            flight_cards = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'Ticket_container')]")
+            url = f"https://www.google.com/travel/flights?q=Flights%20to%20{dest}%20from%20{origin}%20on%20{date_str}%20one-way"
             
-            # If no generic class found, try a broader search for price elements
-            if not flight_cards:
-                 flight_cards = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'BpkTicket')]")
+            self.driver.get(url)
+            time.sleep(random.uniform(3, 5)) # Wait for initial load
+            
+            try:
+                # --- STEP 1: LOAD ALL FLIGHTS (SCROLL & CLICK) ---
+                print(f"   Day {i}: Loading all flight results...")
+                
+                # Scroll down repeatedly to trigger lazy loading
+                for _ in range(5):
+                    self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.END)
+                    time.sleep(1)
 
-            print(f"   Found {len(flight_cards)} flights. Extracting top 3...")
-
-            count = 0
-            for card in flight_cards:
-                if count >= 3: break # Only need top 3 cheapest
+                # Click "View more flights" button if it exists
                 try:
-                    text_content = card.text
-                    
-                    # Heuristic Parsing: Skyscanner text often comes as:
-                    # "10:00 - 14:00\nIndigo\nDirect\n₹ 12,500"
-                    lines = text_content.split('\n')
-                    
-                    # Find price (looks for '₹')
-                    price_line = next((s for s in lines if '₹' in s), "0")
-                    price = int(price_line.replace('₹', '').replace(',', '').strip())
-                    
-                    # Find airline (usually the line after time or duration, hard to pin exactly without dynamic classes)
-                    # We will grab the second longest text line as a fallback for Airline name
-                    airline = lines[1] if len(lines) > 1 else "Unknown"
+                    more_buttons = self.driver.find_elements(By.XPATH, "//button[contains(., 'more flights')]")
+                    for btn in more_buttons:
+                        btn.click()
+                        time.sleep(2)
+                except: pass
 
-                    self.data.append({
-                        "route": f"{origin}-{dest}",
-                        "flight_date": date_display,
-                        "days_to_departure": days_from_now,
-                        "airline": airline,
-                        "price": price,
-                        "source": "Skyscanner"
-                    })
-                    count += 1
-                except Exception as e:
-                    continue
+                # --- STEP 2: EXTRACT DATA ---
+                # Find all flight cards (Class 'pIav2d' is the main container)
+                flights = self.driver.find_elements(By.CLASS_NAME, "pIav2d")
+                print(f"   Found {len(flights)} listings.")
 
-        except Exception as e:
-            print(f"   ⚠️ Could not extract data (Captcha or No Flights): {e}")
+                for flight in flights:
+                    try:
+                        # 1. EXTRACT AIRLINE (The specific fix you asked for)
+                        # Strategy A: Look for the specific class 'sSHqwe'
+                        try:
+                            airline = flight.find_element(By.CLASS_NAME, "sSHqwe").text
+                        except:
+                            # Strategy B: Fallback to image alt text (Logo)
+                            try:
+                                airline = flight.find_element(By.TAG_NAME, "img").get_attribute("alt")
+                            except:
+                                airline = "Unknown Airline"
 
-    def save_csv(self):
-        if not self.data:
-            print("No data collected. Using fallback mock data generator...")
-            self.generate_fallback_data()
+                        # 2. EXTRACT PRICE
+                        try:
+                            # Look for text starting with ₹ or currency symbols
+                            full_text = flight.text.split('\n')
+                            price = 0
+                            for line in full_text:
+                                if '₹' in line or '$' in line:
+                                    # Clean string: "₹ 12,500" -> 12500
+                                    clean_price = ''.join(filter(str.isdigit, line))
+                                    if clean_price:
+                                        price = int(clean_price)
+                                        break
+                        except: price = 0
+
+                        # 3. EXTRACT DURATION & STOPS
+                        # These are often in specific aria-labels or text blocks
+                        text_content = flight.text
+                        stops = "Non-stop" if "Non-stop" in text_content or "Direct" in text_content else "1+ Stops"
+                        if "stop" in text_content and "Non-stop" not in text_content:
+                            # Try to extract specific stop count (e.g., "2 stops")
+                            for line in text_content.split('\n'):
+                                if "stop" in line:
+                                    stops = line
+                                    break
+                        
+                        duration = "N/A"
+                        for line in text_content.split('\n'):
+                            if "hr" in line and "min" in line:
+                                duration = line
+                                break
+
+                        # Add to list
+                        if price > 0: # Filter out garbage data
+                            self.data_list.append({
+                                "route": f"{origin}-{dest}",
+                                "flight_date": date_str,
+                                "days_to_departure": i,
+                                "airline": airline,        # ✅ NOW INCLUDED
+                                "price": price,
+                                "duration": duration,
+                                "stops_count": stops
+                            })
+
+                    except Exception as e:
+                        continue # Skip bad card
+
+            except Exception as e:
+                print(f"   Skipping date due to error: {e}")
+
+    def save_data(self):
+        if self.data_list:
+            df = pd.DataFrame(self.data_list)
+            # Sort by Route, then Date, then Price (Cheapest first)
+            df = df.sort_values(by=['route', 'flight_date', 'price'], ascending=[True, True, True])
+            
+            filename = "final_flight_data_all.csv"
+            df.to_csv(filename, index=False)
+            print(f"\n✅ SUCCESS! Data saved to '{filename}'")
+            print(f"   Total Flights Scraped: {len(df)}")
+            print(df[['airline', 'price', 'stops_count']].head(10)) # Show preview
         else:
-            df = pd.DataFrame(self.data)
-            df.to_csv("skyscanner_data.csv", index=False)
-            print("✅ Data saved to 'skyscanner_data.csv'")
-
-    def generate_fallback_data(self):
-        # Built-in generator in case scraping gets blocked
-        print("   Generating realistic mock data so you have a file to submit...")
-        data = []
-        airlines = ["Indigo", "Air India", "Emirates", "Vistara", "British Airways"]
-        for route in ROUTES:
-            for i in range(1, 31):
-                base = random.randint(15000, 55000)
-                price = int(base * random.uniform(0.8, 1.4))
-                data.append({
-                    "route": f"{route['origin']}-{route['dest']}",
-                    "flight_date": (date.today() + timedelta(days=i)).strftime("%Y-%m-%d"),
-                    "days_to_departure": i,
-                    "airline": random.choice(airlines),
-                    "price": price,
-                    "source": "Skyscanner (Simulated)"
-                })
-        pd.DataFrame(data).to_csv("skyscanner_data.csv", index=False)
-        print("✅ Mock data saved to 'skyscanner_data.csv'")
+            print("⚠️ No data collected. Google might be blocking. Try running later.")
 
     def close(self):
         self.driver.quit()
 
-# --- MAIN RUN ---
+# --- EXECUTION ---
 if __name__ == "__main__":
-    bot = SkyscannerBot()
-    
-    # Iterate through routes
+    bot = UltimateFlightScraper()
     for route in ROUTES:
-        # SCRAPING STRATEGY:
-        # We only scrape 3 days per route (Start, Middle, End) to avoid 100% Ban Rate during testing.
-        # In a real deployed version, you would loop range(1, 31).
-        days_to_check = [1, 15, 30] 
-        
-        for day in days_to_check:
-            bot.scrape_day(route['origin'], route['dest'], day)
-            # Randomized sleep to look human
-            time.sleep(random.uniform(3, 7))
-            
-    bot.save_csv()
+        bot.scrape_route(route['origin'], route['dest'])
+    bot.save_data()
     bot.close()
