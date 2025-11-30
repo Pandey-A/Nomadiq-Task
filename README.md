@@ -31,19 +31,6 @@ each of the above routes for the next 30 days (no login-required sources).
    - Identify minimum price window
    - Summary report with 4–6 insights per route, including observations, learning, and recommendations
 
-## Deliverables
-- Scraping script (Python / Selenium / Playwright / BeautifulSoup)
-- Clean CSV/Excel dataset
-- Visualization graphs (for all 5 routes)
-- Short insight summary (PDF / Doc)
-
-## Expected Timeline
-5–7 days
-
-## End Goal
-Build meaningful insights to support Nomadiq’s Smart Price Prediction
-Model, helping automate the best booking window for travellers.
-
 ## Sample Expected Output
 For BOM–DEL, Indigo (6E) shows highest fluctuation between day 18–27 with cheapest
 price around day 14. Vistara remains stable but rarely the lowest. Major spike on
